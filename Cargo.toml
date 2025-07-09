@@ -1,0 +1,14 @@
+[package]
+name = "demo"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+reqwest = { version = "0.12", features = ["blocking", "json"] }
+serde = { version = "1", features = ["derive"] }
+axum = "0.8"
+anyhow = "1"
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "fs"] }
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+dotenvy = "0.15.7"
