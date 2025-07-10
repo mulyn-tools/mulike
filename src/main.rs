@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use axum::{
     Router,
@@ -52,10 +54,11 @@ where
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct ShareState {
     roomid: u32,
     ruid: u32,
+    client: Arc<reqwest::Client>,
 }
 
 #[tokio::main]
@@ -85,9 +88,18 @@ async fn main() {
         tracing_subscriber::registry().with(fmt::layer()).init();
     }
 
+    let client = Client::builder()
+        .user_agent("Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0")
+        .build()
+        .unwrap();
+
     let app = Router::new()
         .route("/", get(get_list))
-        .with_state(ShareState { roomid, ruid });
+        .with_state(ShareState {
+            roomid,
+            ruid,
+            client: Arc::new(client),
+        });
 
     let listener = tokio::net::TcpListener::bind(local_url).await.unwrap();
     axum::serve(listener, app).await.unwrap();
@@ -99,29 +111,37 @@ struct QueryUsername {
 }
 
 async fn get_list(
-    State(ShareState { roomid, ruid }): State<ShareState>,
+    State(ShareState {
+        roomid,
+        ruid,
+        client,
+    }): State<ShareState>,
     Query(QueryUsername { username }): Query<QueryUsername>,
 ) -> Result<impl IntoResponse, AnyhowError> {
-    let list = get_list_inner(roomid, ruid).await?;
+    let list = get_captains(roomid, ruid, &client).await?;
 
     if let Some(username) = username {
         let res = list
             .into_iter()
-            .filter(|u| u.contains(&username))
+            .filter(|u| u.username.contains(&username))
+            .map(|u| u.username)
             .collect::<Vec<_>>();
 
         return Ok(res.join("\n"));
     }
 
-    Ok(list.join("\n"))
+    Ok(list
+        .into_iter()
+        .map(|u| u.username)
+        .collect::<Vec<_>>()
+        .join("\n"))
 }
 
-async fn get_list_inner(roomid: u32, ruid: u32) -> Result<Vec<String>> {
-    let client = Client::builder()
-        .user_agent("Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0")
-        .build()
-        .unwrap();
-
+async fn get_captains(
+    roomid: u32,
+    ruid: u32,
+    client: &reqwest::Client,
+) -> Result<Vec<CaptainEntry>> {
     let mut page = 1;
 
     let mut res = vec![];
@@ -145,18 +165,18 @@ async fn get_list_inner(roomid: u32, ruid: u32) -> Result<Vec<String>> {
             return Ok(res);
         }
 
-        if page == 1 {
-            if let Some(top3) = c.data.top3 {
-                for i in top3 {
-                    res.push(i.username);
-                }
+        if let Some(top3) = c.data.top3
+            && page == 1
+        {
+            for i in top3 {
+                res.push(i);
             }
         }
 
         let list = c.data.list;
 
         for i in list {
-            res.push(i.username);
+            res.push(i);
         }
 
         page += 1;
